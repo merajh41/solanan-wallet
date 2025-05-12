@@ -1,616 +1,1038 @@
-// --- IMPORTANT SECURITY WARNING ---
-// This script handles cryptographic keys (seed phrase) directly in the browser.
-// This is INSECURE for real assets. Private keys can be exposed.
-// This code is for PROTOTYPE and EDUCATIONAL purposes ONLY.
-// DO NOT use this implementation for a wallet holding real value.
-// Consider using Wallet Adapter standards or secure backend key management for production apps.
-// --- --- --- --- --- --- --- ---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Solana MEME Wallet</title>
+    <!-- Telegram WebApp Script -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Solana Web3.js -->
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <!-- Buffer polyfill (ensure it's loaded before scripts that might use Buffer) -->
+    <script src="https://unpkg.com/buffer@6.0.3/index.js"></script>
+    <script>var Buffer = buffer.Buffer;</script>
+    <!-- QR Code Generation Library -->
+    <script src="https://cdn.rawgit.com/davidshimjs/qrcodejs/gh-pages/qrcode.min.js"></script>
 
-const { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } = solanaWeb3;
+    <style>
+        /* Basic Reset & Body */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
-// --- Configuration ---
-const SOLANA_RPC_URL = "https://api.devnet.solana.com"; // Use Devnet for testing!
-const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
-const MEME_COIN_CONFIG = {
-    // Define meme coins you might add later
-    // key: { name: 'Display Name', icon: '🪙', earnChance: 0.1, earnAmount: () => Math.floor(Math.random() * 10) + 1 }
-    'DOGECLONE': { name: 'DogeClone', icon: '🐶', earnChance: 0.2, earnAmount: () => Math.floor(Math.random() * 5) + 1 },
-    'PEPEFAKE': { name: 'PepeFake', icon: '🐸', earnChance: 0.1, earnAmount: () => 1 },
-    'SHIBIMIT': { name: 'ShibImit', icon: '🦴', earnChance: 0.5, earnAmount: () => Math.floor(Math.random() * 20) + 5 },
-};
-// --- --- --- --- ---
+        :root {
+            /* Dark Red and Black MEME Theme */
+            --tg-theme-bg-color: #121212; /* Very dark, almost black */
+            --tg-theme-text-color: #e0e0e0; /* Light gray for text */
+            --tg-theme-hint-color: #770000; /* Darker red for subtle hints, borders */
+            --tg-theme-link-color: #ff3333; /* Brighter red for links */
+            --tg-theme-button-color: #aa0000; /* Main red for buttons */
+            --tg-theme-button-text-color: #ffffff; /* White text on buttons */
+            --tg-theme-secondary-bg-color: #2a0000; /* Dark red for section backgrounds */
+            --tg-theme-destructive-text-color: #ff5555; /* Lighter red for errors for visibility */
+            --tg-theme-header-color: #ff1a1a; /* Bright red for headers */
 
-// --- Global State ---
-let keypair = null;
-let publicKey = null;
-let userWalletAddress = '';
-let solBalance = 0;
-let tokens = []; // Array to hold token info { mint, balance, symbol, name }
-let nfts = []; // Array to hold NFT info { mint, name, image }
-let tapCount = 0;
-let memeBalances = {}; // { 'DOGECLONE': 10, 'PEPEFAKE': 5 }
-let qrCodeInstance = null; // To hold the QR code generator instance
-let tg; // Telegram WebApp object
-// --- --- --- --- ---
+            /* Meme Font Stack */
+            --font-family-meme: "Comic Sans MS", "Impact", "Arial Black", "Arial Rounded MT Bold", sans-serif;
+        }
 
-// --- DOM Elements ---
-const loadingEl = document.getElementById('loading');
-const walletSetupEl = document.getElementById('wallet-setup');
-const mainAppEl = document.getElementById('main-app');
-const createWalletBtn = document.getElementById('create-wallet-btn');
-const importSeedPhraseInput = document.getElementById('import-seed-phrase');
-const importWalletBtn = document.getElementById('import-wallet-btn');
-const setupErrorEl = document.getElementById('setup-error');
-const walletAddressEl = document.getElementById('wallet-address');
-const qrCodeEl = document.getElementById('qr-code');
-const copyAddressBtn = document.getElementById('copy-address-btn');
-const solBalanceEl = document.getElementById('sol-balance');
-const refreshBtn = document.getElementById('refresh-balance-btn');
-const tokenListEl = document.getElementById('token-list');
-const nftListEl = document.getElementById('nft-list');
-const sendForm = document.getElementById('send-form');
-const recipientAddressInput = document.getElementById('recipient-address');
-const sendAmountInput = document.getElementById('send-amount');
-const sendAssetSelect = document.getElementById('send-asset');
-const sendBtn = document.getElementById('send-btn');
-const sendStatusEl = document.getElementById('send-status');
-const userInfoEl = document.getElementById('user-info');
-const appNav = document.getElementById('app-nav');
-const tapButton = document.getElementById('tap-button');
-const tapCountEl = document.getElementById('tap-count');
-const memeCoinBalancesEl = document.getElementById('meme-coin-balances');
-// --- --- --- --- ---
+        body {
+            font-family: var(--font-family-meme);
+            background-color: var(--tg-theme-bg-color);
+            color: var(--tg-theme-text-color);
+            padding: 15px;
+            overscroll-behavior: none; /* Prevent pull-to-refresh issues */
+        }
 
-// --- Utility Functions ---
-function showLoading(show) {
-    loadingEl.classList.toggle('hidden', !show);
-}
+        #app {
+            max-width: 600px;
+            margin: 0 auto;
+        }
 
-function showSection(sectionId) {
-    document.querySelectorAll('.app-section').forEach(sec => sec.classList.add('hidden'));
-    if (sectionId) {
-        document.getElementById(sectionId)?.classList.remove('hidden');
-    }
+        /* Utility Classes */
+        .hidden {
+            display: none !important;
+        }
 
-    // Update active nav button
-    document.querySelectorAll('#app-nav .nav-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-section') === sectionId);
-    });
-}
+        .error-message {
+            color: var(--tg-theme-destructive-text-color);
+            margin-top: 10px;
+            font-size: 0.9em;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px #000;
+        }
 
-function displayError(element, message) {
-    element.textContent = message;
-    element.classList.remove('hidden');
-}
+        .status-message {
+            margin-top: 10px;
+            font-size: 0.9em;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+            text-align: center;
+            border: 2px solid var(--tg-theme-hint-color);
+        }
 
-function hideError(element) {
-    element.classList.add('hidden');
-    element.textContent = '';
-}
+        .status-message.success {
+            background-color: #003300; /* Dark green */
+            color: #99ff99; /* Light green text */
+            border-color: #006600;
+        }
 
-function displayStatus(message, type = 'info') { // type = 'success' or 'error'
-    sendStatusEl.textContent = message;
-    sendStatusEl.className = `status-message ${type}`; // Reset classes and add new ones
-    sendStatusEl.classList.remove('hidden');
-    setTimeout(() => sendStatusEl.classList.add('hidden'), 5000); // Auto-hide after 5s
-}
-
-async function copyToClipboard(text) {
-    try {
-        await navigator.clipboard.writeText(text);
-        alert('Address copied to clipboard!');
-    } catch (err) {
-        console.error('Failed to copy: ', err);
-        alert('Failed to copy address.');
-    }
-}
-
-function generateQrCode(text) {
-    qrCodeEl.innerHTML = ''; // Clear previous QR code
-    try {
-        qrCodeInstance = new QRCode(qrCodeEl, {
-            text: text,
-            width: 128,
-            height: 128,
-            colorDark: "#000000",
-            colorLight: "#ffffff",
-            correctLevel: QRCode.CorrectLevel.H // High correction level
-        });
-    } catch (e) {
-        console.error("QR Code generation failed:", e);
-        qrCodeEl.textContent = 'QR Code Error';
-    }
-}
-// --- --- --- --- ---
-
-// --- Wallet Functions ---
-
-// !! INSECURE !! Stores seed phrase in localStorage for prototype persistence
-function saveWalletData(seedPhrase) {
-    try {
-        // WARNING: Storing sensitive data like seed phrases in localStorage is highly insecure!
-        // This is only acceptable for a non-production prototype where no real value is at risk.
-        localStorage.setItem('walletSeedPhrase', seedPhrase);
-        console.warn("INSECURE: Seed phrase saved to localStorage for prototype purposes.");
-    } catch (e) {
-        console.error("Failed to save seed phrase to localStorage:", e);
-        displayError(setupErrorEl, "Could not persist wallet data. LocalStorage might be disabled or full.");
-    }
-}
-
-// !! INSECURE !! Loads seed phrase from localStorage
-function loadWalletDataFromStorage() {
-     // WARNING: Loading from localStorage is insecure.
-    return localStorage.getItem('walletSeedPhrase');
-}
-
-async function createWallet() {
-    hideError(setupErrorEl);
-    showLoading(true);
-    try {
-        // Generate a new keypair
-        const newKeypair = Keypair.generate();
-        const seedPhrase = "ERROR_GENERATING_SEED"; // Placeholder - Need BIP39 for mnemonic
-
-        // TODO: Replace Keypair.generate() with mnemonic generation (using bip39 library)
-        // Example (requires importing 'bip39' library):
-        // const mnemonic = bip39.generateMnemonic();
-        // const seed = bip39.mnemonicToSeedSync(mnemonic);
-        // const derivedKeypair = Keypair.fromSeed(seed.slice(0, 32)); // Use first 32 bytes for seed
-        // seedPhrase = mnemonic; // Store the actual mnemonic
-        // keypair = derivedKeypair;
-
-        // TEMPORARY: Using generate() and storing secret key (VERY INSECURE - FOR DEMO ONLY)
-        keypair = newKeypair; // Directly using generated keypair (no seed phrase shown properly yet)
-        const temporarySecret = `[${keypair.secretKey.toString()}]`; // Just showing the byte array
-        saveWalletData(temporarySecret); // Save the INSECURE secret key representation
-
-        alert(`Wallet Created!\n\nAddress: ${keypair.publicKey.toBase58()}\n\n--- !!! WARNING !!! ---\nTHIS IS A PROTOTYPE.\nProper seed phrase generation/display requires the 'bip39' library.\nThe secret key itself is stored INSECURELY in localStorage.\nDO NOT use this for real funds.`);
-
-        await initializeMainApp();
-
-    } catch (error) {
-        console.error("Wallet creation failed:", error);
-        displayError(setupErrorEl, `Wallet creation failed: ${error.message}`);
-    } finally {
-        showLoading(false);
-    }
-}
-
-async function importWallet() {
-    hideError(setupErrorEl);
-    const seedPhrase = importSeedPhraseInput.value.trim();
-    if (!seedPhrase) {
-        displayError(setupErrorEl, "Please enter a seed phrase.");
-        return;
-    }
-
-    showLoading(true);
-    try {
-        // TODO: Implement proper seed phrase import using 'bip39' and potentially 'tweetnacl'
-        // Example (requires 'bip39', 'tweetnacl'):
-        // if (!bip39.validateMnemonic(seedPhrase)) {
-        //     throw new Error("Invalid seed phrase.");
-        // }
-        // const seed = bip39.mnemonicToSeedSync(seedPhrase);
-        // keypair = Keypair.fromSeed(seed.slice(0, 32)); // Use first 32 bytes
-
-        // TEMPORARY: Assuming input is the secret key byte array string (from previous insecure save)
-        if (seedPhrase.startsWith('[') && seedPhrase.endsWith(']')) {
-             const secretKeyBytes = Uint8Array.from(seedPhrase.slice(1, -1).split(',').map(Number));
-             keypair = Keypair.fromSecretKey(secretKeyBytes);
-        } else {
-             throw new Error("Import failed. Prototype currently expects secret key array format `[1,2,...]` or needs BIP39 integration.");
+        .status-message.error {
+            background-color: var(--tg-theme-secondary-bg-color);
+            color: var(--tg-theme-destructive-text-color);
+            border-color: var(--tg-theme-destructive-text-color);
         }
 
 
-        saveWalletData(seedPhrase); // Save the imported (potentially insecure) data
-        await initializeMainApp();
-
-    } catch (error) {
-        console.error("Wallet import failed:", error);
-        displayError(setupErrorEl, `Wallet import failed: ${error.message}`);
-         localStorage.removeItem('walletSeedPhrase'); // Clear invalid saved data
-    } finally {
-        showLoading(false);
-    }
-}
-
-async function initializeMainApp() {
-    if (!keypair) {
-        console.error("Cannot initialize main app without a keypair.");
-        showWalletSetup();
-        return;
-    }
-    publicKey = keypair.publicKey;
-    userWalletAddress = publicKey.toBase58();
-
-    walletSetupEl.classList.add('hidden');
-    mainAppEl.classList.remove('hidden');
-    showLoading(true); // Show loading for initial data fetch
-
-    // Display basic info immediately
-    walletAddressEl.textContent = userWalletAddress;
-    generateQrCode(userWalletAddress);
-
-    // Display Telegram User Info if available
-    if (tg?.initDataUnsafe?.user) {
-        userInfoEl.textContent = `Welcome, ${tg.initDataUnsafe.user.first_name || 'User'}!`;
-    }
-
-     // Load game state
-    loadGameState();
+        .security-warning {
+            background-color: #330000; /* Dark red background */
+            color: #ffdddd; /* Light pink/red text */
+            padding: 15px;
+            border: 2px solid var(--tg-theme-destructive-text-color);
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 1em;
+            text-align: center;
+            font-weight: bold;
+            box-shadow: 0 0 10px var(--tg-theme-destructive-text-color);
+        }
+        .security-warning strong {
+            color: #ffaaaa;
+            font-size: 1.1em;
+            display: block;
+            margin-bottom: 5px;
+        }
 
 
-    // Fetch Solana data
-    await refreshWalletData();
+        /* Loading Indicator */
+        #loading {
+            text-align: center;
+            padding: 20px;
+            font-size: 1.5em;
+            color: var(--tg-theme-header-color);
+            font-weight: bold;
+            text-shadow: 1px 1px 3px #000;
+        }
 
-    // Set default view
-    showSection('wallet-section');
+        /* Wallet Setup */
+        #wallet-setup {
+            text-align: center;
+            padding: 10px;
+            border: 3px dashed var(--tg-theme-hint-color);
+            border-radius: 10px;
+            background-color: rgba(42, 0, 0, 0.3); /* Slightly transparent dark red */
+        }
 
-    showLoading(false);
-}
+        #wallet-setup h1 {
+            margin-bottom: 20px;
+            color: var(--tg-theme-header-color);
+            font-size: 2em;
+            text-transform: uppercase;
+            text-shadow: 2px 2px 4px #000;
+        }
 
-function showWalletSetup() {
-    mainAppEl.classList.add('hidden');
-    walletSetupEl.classList.remove('hidden');
-    keypair = null;
-    publicKey = null;
-    userWalletAddress = '';
-    localStorage.removeItem('walletSeedPhrase'); // Clear storage on setup screen
-}
+        #wallet-setup button {
+            margin: 10px 0;
+            font-size: 1.1em;
+        }
 
-async function fetchSolBalance() {
-    if (!publicKey) return 0;
-    try {
-        const balance = await connection.getBalance(publicKey);
-        return balance / LAMPORTS_PER_SOL;
-    } catch (error) {
-        console.error("Failed to fetch SOL balance:", error);
-        displayStatus("Failed to fetch SOL balance", 'error');
-        return 0;
-    }
-}
+        #wallet-setup textarea {
+            width: 100%;
+            margin-top: 5px;
+            padding: 10px;
+            border: 2px solid var(--tg-theme-hint-color);
+            border-radius: 5px;
+            font-size: 1em;
+            min-height: 70px;
+            background-color: #1a1a1a;
+            color: var(--tg-theme-text-color);
+            font-family: var(--font-family-meme);
+        }
 
-async function fetchTokensAndNFTs() {
-    if (!publicKey) return { tokens: [], nfts: [] };
+        #wallet-setup hr {
+            margin: 25px 0;
+            border: none;
+            border-top: 3px dashed var(--tg-theme-hint-color);
+        }
 
-    let fetchedTokens = [];
-    let fetchedNfts = [];
+        /* Main App */
+        #main-app {
+            /* Styles for the main container when visible */
+        }
 
-    try {
-        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(publicKey, {
-            programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') // SPL Token Program ID
-        });
+        /* Navigation */
+        #app-nav {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+            border-bottom: 3px solid var(--tg-theme-hint-color);
+            padding-bottom: 5px;
+        }
 
-        // Process accounts
-        for (const { account } of tokenAccounts.value) {
-            const parsedInfo = account.data.parsed.info;
-            const mintAddress = parsedInfo.mint;
-            const balance = parsedInfo.tokenAmount.uiAmount;
-            const decimals = parsedInfo.tokenAmount.decimals;
+        .nav-btn {
+            padding: 10px 15px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: var(--tg-theme-link-color);
+            border-bottom: 3px solid transparent;
+            text-transform: uppercase;
+            transition: color 0.2s, border-bottom-color 0.2s;
+        }
+        .nav-btn:hover {
+            color: var(--tg-theme-header-color);
+        }
 
-            // Basic NFT check (amount=1, decimals=0). Needs refinement for real NFTs (Metaplex standard)
-            if (balance === 1 && decimals === 0) {
-                 // Placeholder NFT data - fetching metadata (name, image) is complex
-                 // Requires calling getMetadataAccount, parsing Metaplex data, fetching URI JSON
-                fetchedNfts.push({
-                    mint: mintAddress,
-                    name: `NFT (${mintAddress.substring(0, 6)}...)`, // Placeholder name
-                    image: null // Placeholder image - requires metadata fetch
+        .nav-btn.active {
+            color: var(--tg-theme-header-color);
+            border-bottom-color: var(--tg-theme-header-color);
+            text-shadow: 1px 1px 2px #000;
+        }
+
+        /* App Sections */
+        .app-section {
+            padding: 10px 0;
+        }
+
+        .app-section h2 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: var(--tg-theme-header-color);
+            font-size: 1.8em;
+            text-transform: uppercase;
+            text-shadow: 1px 1px 3px #000;
+        }
+
+        .section-container {
+            background-color: var(--tg-theme-secondary-bg-color);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border: 2px solid var(--tg-theme-hint-color);
+            box-shadow: 0 0 8px rgba(170, 0, 0, 0.5);
+        }
+
+        .section-container h3 {
+            margin-bottom: 15px;
+            border-bottom: 2px solid var(--tg-theme-hint-color);
+            padding-bottom: 8px;
+            color: var(--tg-theme-link-color);
+            font-size: 1.4em;
+            text-transform: lowercase; /* Meme style */
+        }
+
+        /* Wallet Section */
+        .wallet-info {
+            margin-bottom: 20px;
+            line-height: 1.8;
+            word-break: break-all;
+            padding: 10px;
+            border: 1px dashed var(--tg-theme-hint-color);
+            border-radius: 5px;
+        }
+        .wallet-info strong {
+            color: var(--tg-theme-link-color);
+        }
+        .wallet-info span {
+            color: var(--tg-theme-text-color);
+            margin-right: 5px;
+        }
+        #wallet-address {
+            font-family: monospace;
+            font-size: 0.95em;
+            color: #ffdddd; /* Lighter for address visibility */
+        }
+        #copy-address-btn, #refresh-balance-btn {
+            margin-left: 8px;
+            padding: 5px 8px;
+            font-size: 0.9em;
+        }
+
+
+        /* Token & NFT Lists */
+        #token-list, #nft-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        #token-list li, #nft-list .nft-item {
+            padding: 12px 5px;
+            border-bottom: 1px dashed var(--tg-theme-hint-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 1.1em;
+        }
+        #token-list li:hover, #nft-list .nft-item:hover {
+            background-color: rgba(255,0,0,0.1);
+        }
+
+        #token-list li:last-child, #nft-list .nft-item:last-child {
+            border-bottom: none;
+        }
+
+        .nft-item img {
+            width: 50px;
+            height: 50px;
+            object-fit: cover;
+            border-radius: 5px;
+            margin-right: 12px;
+            background-color: var(--tg-theme-hint-color);
+            border: 2px solid var(--tg-theme-text-color);
+        }
+
+        .nft-info {
+            flex-grow: 1;
+            font-weight: bold;
+        }
+
+        /* Send Form */
+        .send-section input[type="text"],
+        .send-section input[type="number"],
+        .send-section select {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 12px;
+            border: 2px solid var(--tg-theme-hint-color);
+            border-radius: 5px;
+            font-size: 1em;
+            background-color: #1f1f1f; /* Slightly lighter dark */
+            color: var(--tg-theme-text-color);
+            font-family: var(--font-family-meme);
+        }
+        .send-section select {
+            appearance: none; /* For custom arrow if desired, or keep default */
+            background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23ff3333%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            background-size: 12px;
+        }
+
+        /* Game Section */
+        #game-section p {
+            text-align: center;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            color: var(--tg-theme-link-color);
+        }
+
+        #tap-area {
+            text-align: center;
+            margin: 25px 0;
+        }
+
+        #tap-button {
+            font-size: 5em; /* Larger emoji */
+            padding: 25px;
+            border: 3px solid var(--tg-theme-button-color);
+            background: radial-gradient(circle, #3a0000 0%, var(--tg-theme-secondary-bg-color) 70%);
+            color: #FFD700; /* Gold color for coin */
+            cursor: pointer;
+            border-radius: 50%;
+            transition: transform 0.05s ease-out, box-shadow 0.1s;
+            display: inline-block;
+            text-shadow: 0 0 10px #ffcc00, 0 0 20px #ffcc00;
+            box-shadow: 0 0 15px var(--tg-theme-button-color), inset 0 0 10px rgba(0,0,0,0.5);
+        }
+
+        #tap-button:active {
+            transform: scale(0.92);
+            box-shadow: 0 0 5px var(--tg-theme-button-color), inset 0 0 15px rgba(0,0,0,0.7);
+        }
+
+        #game-section p strong {
+            color: var(--tg-theme-header-color);
+            font-size: 1.5em;
+        }
+
+        #meme-coin-balances {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: rgba(0,0,0,0.2);
+            border: 2px dashed var(--tg-theme-hint-color);
+            border-radius: 8px;
+        }
+        #meme-coin-balances p {
+            text-align: left;
+            font-size: 1.1em;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        #meme-coin-balances p strong {
+            color: var(--tg-theme-header-color);
+        }
+
+
+        /* General Button Styling */
+        button {
+            padding: 12px 20px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            border: 2px solid var(--tg-theme-text-color);
+            border-radius: 8px;
+            background-color: var(--tg-theme-button-color);
+            color: var(--tg-theme-button-text-color);
+            transition: background-color 0.2s ease, transform 0.1s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+        }
+
+        button:hover {
+            background-color: #d62828; /* Brighter red on hover */
+            border-color: #fff;
+        }
+        button:active {
+            transform: translateY(1px) translateX(1px);
+            box-shadow: 1px 1px 3px rgba(0,0,0,0.5);
+        }
+        button:disabled {
+            background-color: var(--tg-theme-hint-color);
+            color: #aaa;
+            border-color: #555;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        /* QR Code container */
+        .qr-code-container {
+            margin: 20px auto; /* Center it */
+            padding: 8px; /* Padding around QR code */
+            background-color: white !important; /* QR codes NEED white background for scannability */
+            display: inline-block; /* Fit content */
+            border: 3px solid var(--tg-theme-link-color);
+            border-radius: 5px;
+            box-shadow: 0 0 10px var(--tg-theme-link-color);
+        }
+        #qr-code canvas, #qr-code img { /* Styles for the generated QR code element */
+            display: block;
+        }
+
+        #user-info {
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            color: var(--tg-theme-link-color);
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="app">
+        <!-- Loading Indicator -->
+        <div id="loading" class="hidden">LOADING YOUR MEMES...</div>
+
+        <!-- Initial Setup Screen -->
+        <div id="wallet-setup">
+            <h1>MEME WALLET CREATION ZONE</h1>
+            <div class="security-warning">
+                <strong>!!! DANGER ZONE !!!</strong> This is a PROTOTYPE for LOLs only. Your digital beans (keys) are NOT safe here for real tendies. Never share your seed phrase.
+            </div>
+            <button id="create-wallet-btn">🚀 CREATE NEW MEME WALLET</button>
+            <hr>
+            <p>Or... if you already have meme keys:</p>
+            <textarea id="import-seed-phrase" rows="3" placeholder="Enter your 12 or 24 secret words here, fren..."></textarea>
+            <button id="import-wallet-btn">🔍 IMPORT EXISTING WALLET</button>
+            <div id="setup-error" class="error-message hidden"></div>
+        </div>
+
+        <!-- Main App View (Wallet & Game) -->
+        <div id="main-app" class="hidden">
+            <nav id="app-nav">
+                <button data-section="wallet-section" class="nav-btn active">💰 Wallet</button>
+                <button data-section="game-section" class="nav-btn">🎮 Tap Game</button>
+            </nav>
+
+            <!-- Wallet Section -->
+            <div id="wallet-section" class="app-section">
+                <h2>MY SOLANA MEME STASH</h2>
+                <div id="user-info"></div> <!-- For Telegram User Info -->
+                <div class="wallet-info">
+                    <p><strong>Your Address (share this):</strong> <br><span id="wallet-address">Loading...</span> <button id="copy-address-btn">📋 Copy</button></p>
+                    <div id="qr-code" class="qr-code-container">Your QR Code Will Appear Here</div>
+                    <p><strong>SOL Balance:</strong> <span id="sol-balance">Loading...</span> SOL</p>
+                    <button id="refresh-balance-btn">🔄 Refresh Stash</button>
+                </div>
+
+                <div class="section-container">
+                    <h3>✨ My Tokens ✨</h3>
+                    <ul id="token-list">
+                        <li>Loading your shiny tokens...</li>
+                    </ul>
+                </div>
+
+                <div class="section-container">
+                    <h3>🖼️ My NFTs (JPEGs) 🖼️</h3>
+                    <div id="nft-list">
+                        <p>Loading your valuable JPEGs...</p>
+                        <!-- NFT items will be added here -->
+                    </div>
+                </div>
+
+                 <div class="section-container send-section">
+                    <h3>💸 Send Some Coins 💸</h3>
+                    <form id="send-form">
+                         <select id="send-asset">
+                            <option value="SOL">SOL (the serious one)</option>
+                            <!-- Token options will be added dynamically -->
+                        </select>
+                        <input type="text" id="recipient-address" placeholder="Who gets the loot? (Address)" required>
+                        <input type="number" id="send-amount" placeholder="How much loot?" step="any" required>
+                        <button type="submit" id="send-btn">YEET COINS!</button>
+                        <div id="send-status" class="status-message hidden"></div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Game Section -->
+            <div id="game-section" class="app-section hidden">
+                <h2>🚀 TAP-A-MEME TO THE MOON! 🚀</h2>
+                <p>SMASH that coin, earn meme tokens!</p>
+                <div id="tap-area">
+                    <button id="tap-button">🪙</button> <!-- Could be an image too -->
+                </div>
+                <p><strong>Taps:</strong> <span id="tap-count">0</span></p>
+                <hr style="border-top: 2px dashed var(--tg-theme-hint-color); margin: 15px 0;">
+                <h3>🤑 YOUR MEME COIN RICHES 🤑</h3>
+                <div id="meme-coin-balances">
+                    <p>No meme coins earned yet. Get tapping, peasant!</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- IMPORTANT SECURITY WARNING ---
+        // This script handles cryptographic keys (seed phrase) directly in the browser.
+        // This is INSECURE for real assets. Private keys can be exposed.
+        // This code is for PROTOTYPE and EDUCATIONAL purposes ONLY.
+        // DO NOT use this implementation for a wallet holding real value.
+        // Consider using Wallet Adapter standards or secure backend key management for production apps.
+        // --- --- --- --- --- --- --- ---
+
+        const { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } = solanaWeb3;
+
+        // --- Configuration ---
+        const SOLANA_RPC_URL = "https://api.devnet.solana.com"; // Use Devnet for testing!
+        const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+        const MEME_COIN_CONFIG = {
+            // Define meme coins you might add later
+            'DOGECLONE': { name: 'DogeClone', icon: '🐶', earnChance: 0.2, earnAmount: () => Math.floor(Math.random() * 50) + 10 },
+            'PEPEFAKE': { name: 'PepeFake', icon: '🐸', earnChance: 0.15, earnAmount: () => Math.floor(Math.random() * 10) + 5 },
+            'SHIBIMIT': { name: 'ShibImit', icon: '🦴', earnChance: 0.5, earnAmount: () => Math.floor(Math.random() * 200) + 50 },
+            'MOONSHOT': { name: 'MoonShot', icon: '🚀', earnChance: 0.05, earnAmount: () => Math.floor(Math.random() * 1000) + 500 },
+        };
+        // --- --- --- --- ---
+
+        // --- Global State ---
+        let keypair = null;
+        let publicKey = null;
+        let userWalletAddress = '';
+        let solBalance = 0;
+        let tokens = [];
+        let nfts = [];
+        let tapCount = 0;
+        let memeBalances = {};
+        let qrCodeInstance = null;
+        let tg;
+        // --- --- --- --- ---
+
+        // --- DOM Elements ---
+        const loadingEl = document.getElementById('loading');
+        const walletSetupEl = document.getElementById('wallet-setup');
+        const mainAppEl = document.getElementById('main-app');
+        const createWalletBtn = document.getElementById('create-wallet-btn');
+        const importSeedPhraseInput = document.getElementById('import-seed-phrase');
+        const importWalletBtn = document.getElementById('import-wallet-btn');
+        const setupErrorEl = document.getElementById('setup-error');
+        const walletAddressEl = document.getElementById('wallet-address');
+        const qrCodeEl = document.getElementById('qr-code');
+        const copyAddressBtn = document.getElementById('copy-address-btn');
+        const solBalanceEl = document.getElementById('sol-balance');
+        const refreshBtn = document.getElementById('refresh-balance-btn');
+        const tokenListEl = document.getElementById('token-list');
+        const nftListEl = document.getElementById('nft-list');
+        const sendForm = document.getElementById('send-form');
+        const recipientAddressInput = document.getElementById('recipient-address');
+        const sendAmountInput = document.getElementById('send-amount');
+        const sendAssetSelect = document.getElementById('send-asset');
+        const sendBtn = document.getElementById('send-btn');
+        const sendStatusEl = document.getElementById('send-status');
+        const userInfoEl = document.getElementById('user-info');
+        const appNav = document.getElementById('app-nav');
+        const tapButton = document.getElementById('tap-button');
+        const tapCountEl = document.getElementById('tap-count');
+        const memeCoinBalancesEl = document.getElementById('meme-coin-balances');
+        // --- --- --- --- ---
+
+        // --- Utility Functions ---
+        function showLoading(show) {
+            loadingEl.classList.toggle('hidden', !show);
+        }
+
+        function showSection(sectionId) {
+            document.querySelectorAll('.app-section').forEach(sec => sec.classList.add('hidden'));
+            if (sectionId) {
+                document.getElementById(sectionId)?.classList.remove('hidden');
+            }
+            document.querySelectorAll('#app-nav .nav-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-section') === sectionId);
+            });
+        }
+
+        function displayError(element, message) {
+            element.textContent = `Error: ${message}`;
+            element.classList.remove('hidden');
+        }
+
+        function hideError(element) {
+            element.classList.add('hidden');
+            element.textContent = '';
+        }
+
+        function displayStatus(message, type = 'info') {
+            sendStatusEl.textContent = message;
+            sendStatusEl.className = `status-message ${type}`;
+            sendStatusEl.classList.remove('hidden');
+            setTimeout(() => sendStatusEl.classList.add('hidden'), 6000);
+        }
+
+        async function copyToClipboard(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                alert('Address COPIED to clipboard! Now go paste it somewhere.');
+            } catch (err) {
+                console.error('Failed to copy: ', err);
+                alert('Oops, couldn\'t copy address. Try again, maybe?');
+            }
+        }
+
+        function generateQrCode(text) {
+            qrCodeEl.innerHTML = '';
+            try {
+                qrCodeInstance = new QRCode(qrCodeEl, {
+                    text: text,
+                    width: 128,
+                    height: 128,
+                    colorDark: "#000000",
+                    colorLight: "#ffffff", // QR code background itself MUST BE LIGHT
+                    correctLevel: QRCode.CorrectLevel.H
                 });
-            }
-            // Regular SPL Token
-            else if (balance > 0) {
-                 // Placeholder Token data - fetching metadata (symbol, name) requires extra calls or a token registry
-                 fetchedTokens.push({
-                     mint: mintAddress,
-                     balance: balance,
-                     decimals: decimals,
-                     symbol: `TKN (${mintAddress.substring(0, 4)})`, // Placeholder symbol
-                     name: `Token ${mintAddress.substring(0, 6)}...` // Placeholder name
-                 });
+            } catch (e) {
+                console.error("QR Code generation failed:", e);
+                qrCodeEl.textContent = 'QR Code Error - sadge';
             }
         }
-         // Sort tokens alphabetically (optional)
-        fetchedTokens.sort((a, b) => (a.symbol || '').localeCompare(b.symbol || ''));
+        // --- --- --- --- ---
 
-
-    } catch (error) {
-        console.error("Failed to fetch tokens/NFTs:", error);
-        displayStatus("Failed to fetch tokens/NFTs", 'error');
-    }
-    return { tokens: fetchedTokens, nfts: fetchedNfts };
-}
-
-
-async function refreshWalletData() {
-    if (!publicKey) return;
-    showLoading(true);
-    console.log("Refreshing wallet data...");
-
-    try {
-        // Fetch balance and tokens/NFTs in parallel
-        const [balanceResult, assetsResult] = await Promise.all([
-            fetchSolBalance(),
-            fetchTokensAndNFTs()
-        ]);
-
-        solBalance = balanceResult;
-        tokens = assetsResult.tokens;
-        nfts = assetsResult.nfts;
-
-        // Update UI
-        updateWalletUI();
-
-    } catch (error) {
-        console.error("Error refreshing wallet data:", error);
-        displayStatus("Error refreshing wallet data", 'error');
-    } finally {
-        showLoading(false);
-        console.log("Refresh complete.");
-    }
-}
-
-
-function updateWalletUI() {
-    if (!publicKey) return;
-
-    // Update Balance
-    solBalanceEl.textContent = solBalance.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 8 });
-
-    // Update Token List
-    tokenListEl.innerHTML = ''; // Clear list
-    if (tokens.length > 0) {
-        tokens.forEach(token => {
-            const li = document.createElement('li');
-            li.innerHTML = `
-                <span>${token.name || token.symbol}</span>
-                <span>${token.balance.toLocaleString()}</span>
-            `;
-            tokenListEl.appendChild(li);
-        });
-    } else {
-        tokenListEl.innerHTML = '<li>No tokens found.</li>';
-    }
-
-     // Update Send Asset Dropdown
-    sendAssetSelect.innerHTML = '<option value="SOL">SOL</option>'; // Start with SOL
-    tokens.forEach(token => {
-        const option = document.createElement('option');
-        option.value = token.mint; // Use mint address as value
-        option.textContent = `${token.symbol || token.mint.substring(0,6)} (${token.balance})`;
-        option.dataset.decimals = token.decimals; // Store decimals for later use
-        sendAssetSelect.appendChild(option);
-    });
-
-
-    // Update NFT List (Basic)
-    nftListEl.innerHTML = ''; // Clear list
-    if (nfts.length > 0) {
-        nfts.forEach(nft => {
-            const div = document.createElement('div');
-            div.className = 'nft-item';
-            div.innerHTML = `
-                <img src="${nft.image || './placeholder-nft.png'}" alt="${nft.name || 'NFT'}" />
-                <div class="nft-info">${nft.name || 'Unknown NFT'}</div>
-                <span>${nft.mint.substring(0, 6)}...</span>
-            `;
-            nftListEl.appendChild(div);
-        });
-    } else {
-        nftListEl.innerHTML = '<p>No NFTs found.</p>';
-    }
-}
-
-
-async function handleSend(event) {
-    event.preventDefault();
-    if (!keypair) {
-        displayStatus("Wallet not initialized", "error");
-        return;
-    }
-
-    const recipientAddr = recipientAddressInput.value.trim();
-    const amountStr = sendAmountInput.value.trim();
-    const selectedAsset = sendAssetSelect.value; // 'SOL' or token mint address
-
-    if (!recipientAddr || !amountStr) {
-        displayStatus("Please fill in recipient and amount.", "error");
-        return;
-    }
-
-    let recipientPublicKey;
-    try {
-        recipientPublicKey = new PublicKey(recipientAddr);
-    } catch (e) {
-        displayStatus("Invalid recipient address.", "error");
-        return;
-    }
-
-    const amount = parseFloat(amountStr);
-    if (isNaN(amount) || amount <= 0) {
-        displayStatus("Invalid amount.", "error");
-        return;
-    }
-
-    sendBtn.disabled = true;
-    showLoading(true);
-    displayStatus("Preparing transaction...", "info");
-
-    try {
-        const transaction = new Transaction();
-        let signature = '';
-
-        if (selectedAsset === 'SOL') {
-            // SOL Transfer
-             if (amount > solBalance) {
-                throw new Error("Insufficient SOL balance.");
+        // --- Wallet Functions ---
+        function saveWalletData(seedPhraseOrSecret) {
+            try {
+                localStorage.setItem('memeWalletData', seedPhraseOrSecret);
+                console.warn("INSECURE: Wallet data saved to localStorage. For memes only!");
+            } catch (e) {
+                console.error("Failed to save wallet data to localStorage:", e);
+                displayError(setupErrorEl, "Could not save wallet. LocalStorage full or angry.");
             }
-            transaction.add(
-                SystemProgram.transfer({
-                    fromPubkey: publicKey,
-                    toPubkey: recipientPublicKey,
-                    lamports: Math.floor(amount * LAMPORTS_PER_SOL), // Convert SOL to lamports
-                })
-            );
-        } else {
-            // SPL Token Transfer - REQUIRES @solana/spl-token library
-            // This part is more complex and needs the spl-token library installed/imported.
-            // You need the sender's token account, receiver's token account (or create it),
-            // and use Token.createTransferInstruction.
-            displayStatus("SPL Token sending not fully implemented in this prototype. Requires @solana/spl-token library.", "error");
-             // Placeholder logic - needs actual implementation
-            // const mintPublicKey = new PublicKey(selectedAsset);
-            // const selectedToken = tokens.find(t => t.mint === selectedAsset);
-            // const decimals = selectedToken?.decimals ?? 0; // Get decimals from stored token data
-            // const amountInSmallestUnit = Math.floor(amount * Math.pow(10, decimals));
-            // console.log(`Need to send ${amountInSmallestUnit} of token ${mintPublicKey.toBase58()}`);
-            // // ... add spl-token transfer instruction here ...
-            throw new Error("SPL Token sending needs implementation.");
         }
 
-        // Sign and send the transaction
-        console.log("Sending transaction...");
-        signature = await sendAndConfirmTransaction(connection, transaction, [keypair], {
-            commitment: 'confirmed',
-            skipPreflight: false // Keep preflight for checks
+        function loadWalletDataFromStorage() {
+            return localStorage.getItem('memeWalletData');
+        }
+
+        async function createWallet() {
+            hideError(setupErrorEl);
+            showLoading(true);
+            try {
+                // For a real app, use bip39 to generate a mnemonic
+                // const mnemonic = bip39.generateMnemonic();
+                // const seed = bip39.mnemonicToSeedSync(mnemonic);
+                // keypair = Keypair.fromSeed(seed.slice(0, 32));
+                // saveWalletData(mnemonic); // Save the mnemonic
+
+                // PROTOTYPE: Generate keypair directly & save secret key (VERY INSECURE)
+                keypair = Keypair.generate();
+                const secretKeyString = `[${keypair.secretKey.toString()}]`; // For re-import in this demo
+                saveWalletData(secretKeyString);
+
+                alert(`MEME WALLET CREATED!\n\nAddress: ${keypair.publicKey.toBase58()}\n\n--- !!! WARNING !!! ---\nTHIS IS A PROTOTYPE.\nThe secret key was INSECURELY saved to browser storage.\nDO NOT use this for real crypto tendies.`);
+
+                await initializeMainApp();
+
+            } catch (error) {
+                console.error("Wallet creation failed:", error);
+                displayError(setupErrorEl, `Wallet creation FAILED: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function importWallet() {
+            hideError(setupErrorEl);
+            const dataToImport = importSeedPhraseInput.value.trim();
+            if (!dataToImport) {
+                displayError(setupErrorEl, "Enter your secret words or key, my dude.");
+                return;
+            }
+            showLoading(true);
+            try {
+                // For a real app with bip39:
+                // if (bip39.validateMnemonic(dataToImport)) {
+                //   const seed = bip39.mnemonicToSeedSync(dataToImport);
+                //   keypair = Keypair.fromSeed(seed.slice(0, 32));
+                //   saveWalletData(dataToImport); // Save the mnemonic
+                // } else { ... }
+
+                // PROTOTYPE: Assuming import is the secret key byte array string
+                if (dataToImport.startsWith('[') && dataToImport.endsWith(']')) {
+                    const secretKeyBytes = Uint8Array.from(dataToImport.slice(1, -1).split(',').map(Number));
+                    keypair = Keypair.fromSecretKey(secretKeyBytes);
+                    saveWalletData(dataToImport); // Re-save the secret key string
+                } else {
+                    throw new Error("Invalid import format for this meme prototype. Expected secret key array like `[1,2,...]` or needs real BIP39 seed phrase support.");
+                }
+
+                await initializeMainApp();
+
+            } catch (error) {
+                console.error("Wallet import failed:", error);
+                displayError(setupErrorEl, `Wallet import FAILED: ${error.message}`);
+                localStorage.removeItem('memeWalletData');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function initializeMainApp() {
+            if (!keypair) {
+                showWalletSetup();
+                return;
+            }
+            publicKey = keypair.publicKey;
+            userWalletAddress = publicKey.toBase58();
+
+            walletSetupEl.classList.add('hidden');
+            mainAppEl.classList.remove('hidden');
+            showLoading(true);
+
+            walletAddressEl.textContent = userWalletAddress;
+            generateQrCode(userWalletAddress);
+
+            if (tg?.initDataUnsafe?.user) {
+                userInfoEl.textContent = `Hey ${tg.initDataUnsafe.user.first_name || 'Meme Lord'}! Let's get these coins!`;
+            }
+
+            loadGameState();
+            await refreshWalletData();
+            showSection('wallet-section');
+            showLoading(false);
+        }
+
+        function showWalletSetup() {
+            mainAppEl.classList.add('hidden');
+            walletSetupEl.classList.remove('hidden');
+            keypair = null;
+            publicKey = null;
+            userWalletAddress = '';
+            // localStorage.removeItem('memeWalletData'); // Optional: Clear on showing setup
+        }
+
+        async function fetchSolBalance() {
+            if (!publicKey) return 0;
+            try {
+                const balance = await connection.getBalance(publicKey);
+                return balance / LAMPORTS_PER_SOL;
+            } catch (error) {
+                console.error("Failed to fetch SOL balance:", error);
+                displayStatus("Can't get SOL balance. Network gremlins?", 'error');
+                return solBalance; // return previous balance on error
+            }
+        }
+
+        async function fetchTokensAndNFTs() {
+            if (!publicKey) return { tokens: [], nfts: [] };
+            let fetchedTokens = [];
+            let fetchedNfts = [];
+            try {
+                const tokenAccounts = await connection.getParsedTokenAccountsByOwner(publicKey, {
+                    programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+                });
+                for (const { account } of tokenAccounts.value) {
+                    const parsedInfo = account.data.parsed.info;
+                    const mintAddress = parsedInfo.mint;
+                    const balance = parsedInfo.tokenAmount.uiAmount;
+                    const decimals = parsedInfo.tokenAmount.decimals;
+
+                    if (balance === 1 && decimals === 0) {
+                        fetchedNfts.push({
+                            mint: mintAddress,
+                            name: `Rare JPEG (${mintAddress.substring(0, 4)}...${mintAddress.substring(mintAddress.length - 4)})`,
+                            image: `https://via.placeholder.com/50/AA0000/FFFFFF?Text=NFT` // Placeholder
+                        });
+                    } else if (balance > 0) {
+                        fetchedTokens.push({
+                            mint: mintAddress,
+                            balance: balance,
+                            decimals: decimals,
+                            symbol: `MEME (${mintAddress.substring(0, 3)})`,
+                            name: `MemeCoin ${mintAddress.substring(0, 4)}...`
+                        });
+                    }
+                }
+                fetchedTokens.sort((a, b) => (a.symbol || '').localeCompare(b.symbol || ''));
+            } catch (error) {
+                console.error("Failed to fetch tokens/NFTs:", error);
+                displayStatus("Can't get your tokens/JPEGs. Very uncool.", 'error');
+            }
+            return { tokens: fetchedTokens, nfts: fetchedNfts };
+        }
+
+        async function refreshWalletData() {
+            if (!publicKey) return;
+            showLoading(true);
+            refreshBtn.disabled = true;
+            try {
+                const [balanceResult, assetsResult] = await Promise.all([
+                    fetchSolBalance(),
+                    fetchTokensAndNFTs()
+                ]);
+                solBalance = balanceResult;
+                tokens = assetsResult.tokens;
+                nfts = assetsResult.nfts;
+                updateWalletUI();
+            } catch (error) {
+                console.error("Error refreshing wallet data:", error);
+            } finally {
+                showLoading(false);
+                refreshBtn.disabled = false;
+            }
+        }
+
+        function updateWalletUI() {
+            if (!publicKey) return;
+            solBalanceEl.textContent = solBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+
+            tokenListEl.innerHTML = '';
+            if (tokens.length > 0) {
+                tokens.forEach(token => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<span>${token.name || token.symbol}</span> <span>${token.balance.toLocaleString()}</span>`;
+                    tokenListEl.appendChild(li);
+                });
+            } else {
+                tokenListEl.innerHTML = '<li>No meme tokens found. Sad.</li>';
+            }
+
+            sendAssetSelect.innerHTML = '<option value="SOL">SOL (the serious one)</option>';
+            tokens.forEach(token => {
+                const option = document.createElement('option');
+                option.value = token.mint;
+                option.textContent = `${token.symbol || token.mint.substring(0,6)} (${token.balance.toLocaleString()})`;
+                option.dataset.decimals = token.decimals;
+                sendAssetSelect.appendChild(option);
+            });
+
+            nftListEl.innerHTML = '';
+            if (nfts.length > 0) {
+                nfts.forEach(nft => {
+                    const div = document.createElement('div');
+                    div.className = 'nft-item';
+                    div.innerHTML = `
+                        <img src="${nft.image || 'https://via.placeholder.com/50/AA0000/FFFFFF?Text=NFT'}" alt="${nft.name || 'NFT'}" />
+                        <div class="nft-info">${nft.name || 'Unknown JPEG'}</div>
+                        <span>Mint: ...${nft.mint.substring(nft.mint.length - 6)}</span>`;
+                    nftListEl.appendChild(div);
+                });
+            } else {
+                nftListEl.innerHTML = '<p>No rare JPEGs here. Go mint some!</p>';
+            }
+        }
+
+        async function handleSend(event) {
+            event.preventDefault();
+            if (!keypair) {
+                displayStatus("Initialize wallet first, genius!", "error");
+                return;
+            }
+            const recipientAddr = recipientAddressInput.value.trim();
+            const amountStr = sendAmountInput.value.trim();
+            const selectedAsset = sendAssetSelect.value;
+
+            if (!recipientAddr || !amountStr) {
+                displayStatus("Recipient and amount, pls.", "error");
+                return;
+            }
+            let recipientPublicKey;
+            try {
+                recipientPublicKey = new PublicKey(recipientAddr);
+            } catch (e) {
+                displayStatus("That address looks sus. Invalid.", "error");
+                return;
+            }
+            const amount = parseFloat(amountStr);
+            if (isNaN(amount) || amount <= 0) {
+                displayStatus("Send a real amount, c'mon.", "error");
+                return;
+            }
+
+            sendBtn.disabled = true;
+            showLoading(true);
+            displayStatus("YEETING coins...", "info");
+
+            try {
+                const transaction = new Transaction();
+                let signature = '';
+
+                if (selectedAsset === 'SOL') {
+                    if (amount > solBalance) throw new Error("Not enough SOL, bro.");
+                    transaction.add(
+                        SystemProgram.transfer({
+                            fromPubkey: publicKey,
+                            toPubkey: recipientPublicKey,
+                            lamports: Math.floor(amount * LAMPORTS_PER_SOL),
+                        })
+                    );
+                } else {
+                    // SPL Token Sending - Basic placeholder, needs @solana/spl-token for full implementation
+                    // const mintPublicKey = new PublicKey(selectedAsset);
+                    // const tokenInfo = tokens.find(t => t.mint === selectedAsset);
+                    // if (!tokenInfo || amount > tokenInfo.balance) throw new Error("Not enough of that meme token.");
+                    // This requires Token.createTransferInstruction from @solana/spl-token and finding/creating Associated Token Accounts.
+                    throw new Error("Meme token (SPL) sending is advanced stuff, not fully built in this meme-grade prototype. Ask a dev for help!");
+                }
+
+                signature = await sendAndConfirmTransaction(connection, transaction, [keypair], {
+                    commitment: 'confirmed', skipPreflight: false
+                });
+                displayStatus(`Coins YEETED! TX: ${signature.substring(0, 10)}...🚀`, "success");
+                await refreshWalletData();
+                recipientAddressInput.value = '';
+                sendAmountInput.value = '';
+            } catch (error) {
+                console.error("Send transaction failed:", error);
+                displayStatus(`YEET FAILED: ${error.message}`, "error");
+            } finally {
+                sendBtn.disabled = false;
+                showLoading(false);
+            }
+        }
+        // --- --- --- --- ---
+
+        // --- Tap Game Functions ---
+        function saveGameState() {
+            try {
+                localStorage.setItem('memeTapGameState', JSON.stringify({ tapCount, memeBalances }));
+            } catch (e) { console.warn("Couldn't save game state. Oh well."); }
+        }
+
+        function loadGameState() {
+            try {
+                const savedState = localStorage.getItem('memeTapGameState');
+                if (savedState) {
+                    const gameState = JSON.parse(savedState);
+                    tapCount = gameState.tapCount || 0;
+                    memeBalances = gameState.memeBalances || {};
+                } else {
+                    tapCount = 0;
+                    memeBalances = {};
+                    Object.keys(MEME_COIN_CONFIG).forEach(key => { memeBalances[key] = 0; });
+                }
+            } catch (e) {
+                console.warn("Couldn't load game state. Starting fresh!", e);
+                tapCount = 0;
+                memeBalances = {};
+                Object.keys(MEME_COIN_CONFIG).forEach(key => { memeBalances[key] = 0; });
+            }
+            updateGameUI();
+        }
+
+        function handleTap() {
+            tapCount++;
+            let earnedSomething = false;
+            let earningsMessage = "You tapped! ";
+
+            Object.entries(MEME_COIN_CONFIG).forEach(([key, config]) => {
+                if (Math.random() < config.earnChance) {
+                    const amountEarned = config.earnAmount();
+                    memeBalances[key] = (memeBalances[key] || 0) + amountEarned;
+                    earningsMessage += `+${amountEarned} ${config.icon} ${config.name}! `;
+                    earnedSomething = true;
+                }
+            });
+
+            if (earnedSomething) {
+                 // Optional: display a quick toast/popup for earnings
+                 // For now, console log is fine for a meme app
+                 console.log(earningsMessage);
+            }
+
+            updateGameUI();
+            saveGameState();
+        }
+
+        function updateGameUI() {
+            tapCountEl.textContent = tapCount.toLocaleString();
+            memeCoinBalancesEl.innerHTML = '';
+            let hasBalances = false;
+            Object.entries(MEME_COIN_CONFIG).forEach(([key, config]) => {
+                const balance = memeBalances[key] || 0;
+                if (balance > 0) {
+                    const p = document.createElement('p');
+                    p.innerHTML = `${config.icon} ${config.name}: <strong>${balance.toLocaleString()}</strong>`;
+                    memeCoinBalancesEl.appendChild(p);
+                    hasBalances = true;
+                }
+            });
+            if (!hasBalances && Object.keys(MEME_COIN_CONFIG).length > 0) { // only show if coins are configured
+                memeCoinBalancesEl.innerHTML = '<p>Zero meme coins. Keep SMASHING that button!</p>';
+            } else if (Object.keys(MEME_COIN_CONFIG).length === 0) {
+                memeCoinBalancesEl.innerHTML = '<p>Admin needs to add some meme coins to earn!</p>';
+            }
+        }
+        // --- --- --- --- ---
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log("DOM Loaded - Time to MEME!");
+            tg = window.Telegram.WebApp;
+            tg.ready();
+            // tg.expand(); // Uncomment if you want the app to try and expand
+
+            const savedWalletData = loadWalletDataFromStorage();
+            if (savedWalletData) {
+                console.log("Found saved meme wallet data (INSECURELY!)");
+                importSeedPhraseInput.value = savedWalletData; // Pre-fill for easier re-import/debug
+                importWallet(); // Attempt auto-import
+            } else {
+                console.log("No saved meme wallet. Welcome, new memer!");
+                showWalletSetup();
+            }
+
+            createWalletBtn.addEventListener('click', createWallet);
+            importWalletBtn.addEventListener('click', importWallet);
+            refreshBtn.addEventListener('click', refreshWalletData);
+            copyAddressBtn.addEventListener('click', () => copyToClipboard(userWalletAddress));
+            sendForm.addEventListener('submit', handleSend);
+            tapButton.addEventListener('click', handleTap);
+
+            appNav.addEventListener('click', (e) => {
+                if (e.target.classList.contains('nav-btn')) {
+                    const sectionId = e.target.getAttribute('data-section');
+                    showSection(sectionId);
+                }
+            });
+
+            // Initialize game UI elements even if hidden
+            updateGameUI();
         });
-
-        console.log("Transaction successful with signature:", signature);
-        displayStatus(`Transaction successful! Signature: ${signature.substring(0, 20)}...`, "success");
-
-        // Refresh balance after successful transaction
-        await refreshWalletData();
-        recipientAddressInput.value = ''; // Clear form
-        sendAmountInput.value = '';
-
-    } catch (error) {
-        console.error("Send transaction failed:", error);
-        let errorMessage = `Send failed: ${error.message}`;
-        if (error.logs) {
-            errorMessage += ` Logs: ${JSON.stringify(error.logs)}`;
-        }
-        displayStatus(errorMessage, "error");
-    } finally {
-        sendBtn.disabled = false;
-        showLoading(false);
-    }
-}
-
-// --- --- --- --- ---
-
-// --- Tap Game Functions ---
-
-function saveGameState() {
-    try {
-        const gameState = JSON.stringify({ tapCount, memeBalances });
-        localStorage.setItem('tapGameState', gameState);
-    } catch (e) {
-        console.warn("Could not save game state:", e);
-    }
-}
-
-function loadGameState() {
-     try {
-        const savedState = localStorage.getItem('tapGameState');
-        if (savedState) {
-            const gameState = JSON.parse(savedState);
-            tapCount = gameState.tapCount || 0;
-            memeBalances = gameState.memeBalances || {};
-        } else {
-            // Initialize default state if nothing saved
-             tapCount = 0;
-             memeBalances = {};
-             Object.keys(MEME_COIN_CONFIG).forEach(key => { memeBalances[key] = 0; }); // Initialize balances
-        }
-    } catch (e) {
-        console.warn("Could not load game state, resetting:", e);
-        tapCount = 0;
-        memeBalances = {};
-        Object.keys(MEME_COIN_CONFIG).forEach(key => { memeBalances[key] = 0; });
-    }
-    updateGameUI(); // Update UI after loading
-}
-
-
-function handleTap() {
-    tapCount++;
-
-    // Award meme coins based on config
-    Object.entries(MEME_COIN_CONFIG).forEach(([key, config]) => {
-        if (Math.random() < config.earnChance) {
-            const amountEarned = config.earnAmount();
-            memeBalances[key] = (memeBalances[key] || 0) + amountEarned;
-            console.log(`Earned ${amountEarned} ${config.name}`);
-            // Optional: Show a brief notification of earning
-        }
-    });
-
-    updateGameUI();
-    saveGameState(); // Save state after every tap/reward cycle
-}
-
-function updateGameUI() {
-    tapCountEl.textContent = tapCount.toLocaleString();
-
-    memeCoinBalancesEl.innerHTML = ''; // Clear previous balances
-    let hasBalances = false;
-    Object.entries(MEME_COIN_CONFIG).forEach(([key, config]) => {
-        const balance = memeBalances[key] || 0;
-        if (balance > 0 || !hasBalances) { // Show if balance > 0 or if it's the first one
-             const p = document.createElement('p');
-             p.innerHTML = `${config.icon} ${config.name}: <strong>${balance.toLocaleString()}</strong>`;
-             memeCoinBalancesEl.appendChild(p);
-             hasBalances = true;
-        }
-    });
-
-     if (!hasBalances) {
-        memeCoinBalancesEl.innerHTML = '<p>Keep tapping to earn meme coins!</p>';
-    }
-}
-
-// --- --- --- --- ---
-
-// --- Initialization ---
-document.addEventListener('DOMContentLoaded', () => {
-    console.log("DOM Loaded");
-    tg = window.Telegram.WebApp;
-    tg.ready(); // Inform Telegram the app is ready
-    // tg.expand(); // Optional: Request the app to expand to full height
-
-    // Check if a wallet seed exists in storage (INSECURE METHOD)
-    const savedSeed = loadWalletDataFromStorage();
-    if (savedSeed) {
-        console.log("Found saved wallet data in storage (INSECURE)");
-        // Need to re-initialize keypair from saved data
-        // This depends heavily on how `saveWalletData` stores it (seed vs secret key)
-         importSeedPhraseInput.value = savedSeed; // Pre-fill for potential re-import
-         importWallet(); // Try to automatically import/initialize
-    } else {
-        console.log("No saved wallet found. Showing setup.");
-        showWalletSetup();
-    }
-
-    // --- Event Listeners ---
-    createWalletBtn.addEventListener('click', createWallet);
-    importWalletBtn.addEventListener('click', importWallet);
-    refreshBtn.addEventListener('click', refreshWalletData);
-    copyAddressBtn.addEventListener('click', () => copyToClipboard(userWalletAddress));
-    sendForm.addEventListener('submit', handleSend);
-    tapButton.addEventListener('click', handleTap);
-
-    // Navigation Listener
-    appNav.addEventListener('click', (e) => {
-        if (e.target.classList.contains('nav-btn')) {
-            const sectionId = e.target.getAttribute('data-section');
-            showSection(sectionId);
-        }
-    });
-
-    // Initial UI update for the game section (even if hidden)
-    updateGameUI();
-
-});
-// --- --- --- --- ---
+        // --- --- --- --- ---
+    </script>
+</body>
+</html>
