@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Solana Wallet TMA</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/@solana/web3.js@1.86.0/lib/index.iife.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Solana Wallet</h1>
+            <button onclick="Telegram.WebApp.close()">Close</button>
+        </header>
+
+        <section id="wallet-setup">
+            <h2>Wallet Setup</h2>
+            <button onclick="createWallet()">Create Wallet</button>
+            <input type="text" id="seed-input" placeholder="Enter seed phrase to import" />
+            <button onclick="importWallet()">Import Wallet</button>
+            <p><strong>Address:</strong> <span id="wallet-address">Not connected</span></p>
+        </section>
+
+        <section id="balance">
+            <h2>Your Balance</h2>
+            <p>SOL: <span id="sol-balance">0</span></p>
+            <h3>SPL Tokens</h3>
+            <ul id="token-list"></ul>
+        </section>
+
+        <section id="nfts">
+            <h2>Your NFTs</h2>
+            <div id="nft-list"></div>
+        </section>
+
+        <section id="send">
+            <h2>Send</h2>
+            <input type="text" id="recipient" placeholder="Recipient Address" />
+            <input type="number" id="amount" placeholder="Amount (SOL)" />
+            <button onclick="sendTransaction()">Send</button>
+        </section>
+
+        <section id="receive">
+            <h2>Receive</h2>
+            <p>Your Address: <span id="receive-address">N/A</span></p>
+            <canvas id="qr-code"></canvas>
+        </section>
+
+        <section id="tap-game">
+            <h2>🐾 Meme Coin Tap Game</h2>
+            <button onclick="handleTap()">Tap Me!</button>
+            <p>Total Taps: <span id="tap-count">0</span></p>
+            <div id="meme-coin-balances"></div>
+        </section>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
