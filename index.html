@@ -1,59 +1,616 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Solana Wallet TMA</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://unpkg.com/@solana/web3.js@1.86.0/lib/index.iife.js"></script>
-</head>
-<body>
-    <div id="app">
-        <header>
-            <h1>Solana Wallet</h1>
-            <button onclick="Telegram.WebApp.close()">Close</button>
-        </header>
+// --- IMPORTANT SECURITY WARNING ---
+// This script handles cryptographic keys (seed phrase) directly in the browser.
+// This is INSECURE for real assets. Private keys can be exposed.
+// This code is for PROTOTYPE and EDUCATIONAL purposes ONLY.
+// DO NOT use this implementation for a wallet holding real value.
+// Consider using Wallet Adapter standards or secure backend key management for production apps.
+// --- --- --- --- --- --- --- ---
 
-        <section id="wallet-setup">
-            <h2>Wallet Setup</h2>
-            <button onclick="createWallet()">Create Wallet</button>
-            <input type="text" id="seed-input" placeholder="Enter seed phrase to import" />
-            <button onclick="importWallet()">Import Wallet</button>
-            <p><strong>Address:</strong> <span id="wallet-address">Not connected</span></p>
-        </section>
+const { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } = solanaWeb3;
 
-        <section id="balance">
-            <h2>Your Balance</h2>
-            <p>SOL: <span id="sol-balance">0</span></p>
-            <h3>SPL Tokens</h3>
-            <ul id="token-list"></ul>
-        </section>
+// --- Configuration ---
+const SOLANA_RPC_URL = "https://api.devnet.solana.com"; // Use Devnet for testing!
+const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+const MEME_COIN_CONFIG = {
+    // Define meme coins you might add later
+    // key: { name: 'Display Name', icon: '🪙', earnChance: 0.1, earnAmount: () => Math.floor(Math.random() * 10) + 1 }
+    'DOGECLONE': { name: 'DogeClone', icon: '🐶', earnChance: 0.2, earnAmount: () => Math.floor(Math.random() * 5) + 1 },
+    'PEPEFAKE': { name: 'PepeFake', icon: '🐸', earnChance: 0.1, earnAmount: () => 1 },
+    'SHIBIMIT': { name: 'ShibImit', icon: '🦴', earnChance: 0.5, earnAmount: () => Math.floor(Math.random() * 20) + 5 },
+};
+// --- --- --- --- ---
 
-        <section id="nfts">
-            <h2>Your NFTs</h2>
-            <div id="nft-list"></div>
-        </section>
+// --- Global State ---
+let keypair = null;
+let publicKey = null;
+let userWalletAddress = '';
+let solBalance = 0;
+let tokens = []; // Array to hold token info { mint, balance, symbol, name }
+let nfts = []; // Array to hold NFT info { mint, name, image }
+let tapCount = 0;
+let memeBalances = {}; // { 'DOGECLONE': 10, 'PEPEFAKE': 5 }
+let qrCodeInstance = null; // To hold the QR code generator instance
+let tg; // Telegram WebApp object
+// --- --- --- --- ---
 
-        <section id="send">
-            <h2>Send</h2>
-            <input type="text" id="recipient" placeholder="Recipient Address" />
-            <input type="number" id="amount" placeholder="Amount (SOL)" />
-            <button onclick="sendTransaction()">Send</button>
-        </section>
+// --- DOM Elements ---
+const loadingEl = document.getElementById('loading');
+const walletSetupEl = document.getElementById('wallet-setup');
+const mainAppEl = document.getElementById('main-app');
+const createWalletBtn = document.getElementById('create-wallet-btn');
+const importSeedPhraseInput = document.getElementById('import-seed-phrase');
+const importWalletBtn = document.getElementById('import-wallet-btn');
+const setupErrorEl = document.getElementById('setup-error');
+const walletAddressEl = document.getElementById('wallet-address');
+const qrCodeEl = document.getElementById('qr-code');
+const copyAddressBtn = document.getElementById('copy-address-btn');
+const solBalanceEl = document.getElementById('sol-balance');
+const refreshBtn = document.getElementById('refresh-balance-btn');
+const tokenListEl = document.getElementById('token-list');
+const nftListEl = document.getElementById('nft-list');
+const sendForm = document.getElementById('send-form');
+const recipientAddressInput = document.getElementById('recipient-address');
+const sendAmountInput = document.getElementById('send-amount');
+const sendAssetSelect = document.getElementById('send-asset');
+const sendBtn = document.getElementById('send-btn');
+const sendStatusEl = document.getElementById('send-status');
+const userInfoEl = document.getElementById('user-info');
+const appNav = document.getElementById('app-nav');
+const tapButton = document.getElementById('tap-button');
+const tapCountEl = document.getElementById('tap-count');
+const memeCoinBalancesEl = document.getElementById('meme-coin-balances');
+// --- --- --- --- ---
 
-        <section id="receive">
-            <h2>Receive</h2>
-            <p>Your Address: <span id="receive-address">N/A</span></p>
-            <canvas id="qr-code"></canvas>
-        </section>
+// --- Utility Functions ---
+function showLoading(show) {
+    loadingEl.classList.toggle('hidden', !show);
+}
 
-        <section id="tap-game">
-            <h2>🐾 Meme Coin Tap Game</h2>
-            <button onclick="handleTap()">Tap Me!</button>
-            <p>Total Taps: <span id="tap-count">0</span></p>
-            <div id="meme-coin-balances"></div>
-        </section>
-    </div>
+function showSection(sectionId) {
+    document.querySelectorAll('.app-section').forEach(sec => sec.classList.add('hidden'));
+    if (sectionId) {
+        document.getElementById(sectionId)?.classList.remove('hidden');
+    }
 
-    <script src="script.js"></script>
-</body>
-</html>
+    // Update active nav button
+    document.querySelectorAll('#app-nav .nav-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-section') === sectionId);
+    });
+}
+
+function displayError(element, message) {
+    element.textContent = message;
+    element.classList.remove('hidden');
+}
+
+function hideError(element) {
+    element.classList.add('hidden');
+    element.textContent = '';
+}
+
+function displayStatus(message, type = 'info') { // type = 'success' or 'error'
+    sendStatusEl.textContent = message;
+    sendStatusEl.className = `status-message ${type}`; // Reset classes and add new ones
+    sendStatusEl.classList.remove('hidden');
+    setTimeout(() => sendStatusEl.classList.add('hidden'), 5000); // Auto-hide after 5s
+}
+
+async function copyToClipboard(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        alert('Address copied to clipboard!');
+    } catch (err) {
+        console.error('Failed to copy: ', err);
+        alert('Failed to copy address.');
+    }
+}
+
+function generateQrCode(text) {
+    qrCodeEl.innerHTML = ''; // Clear previous QR code
+    try {
+        qrCodeInstance = new QRCode(qrCodeEl, {
+            text: text,
+            width: 128,
+            height: 128,
+            colorDark: "#000000",
+            colorLight: "#ffffff",
+            correctLevel: QRCode.CorrectLevel.H // High correction level
+        });
+    } catch (e) {
+        console.error("QR Code generation failed:", e);
+        qrCodeEl.textContent = 'QR Code Error';
+    }
+}
+// --- --- --- --- ---
+
+// --- Wallet Functions ---
+
+// !! INSECURE !! Stores seed phrase in localStorage for prototype persistence
+function saveWalletData(seedPhrase) {
+    try {
+        // WARNING: Storing sensitive data like seed phrases in localStorage is highly insecure!
+        // This is only acceptable for a non-production prototype where no real value is at risk.
+        localStorage.setItem('walletSeedPhrase', seedPhrase);
+        console.warn("INSECURE: Seed phrase saved to localStorage for prototype purposes.");
+    } catch (e) {
+        console.error("Failed to save seed phrase to localStorage:", e);
+        displayError(setupErrorEl, "Could not persist wallet data. LocalStorage might be disabled or full.");
+    }
+}
+
+// !! INSECURE !! Loads seed phrase from localStorage
+function loadWalletDataFromStorage() {
+     // WARNING: Loading from localStorage is insecure.
+    return localStorage.getItem('walletSeedPhrase');
+}
+
+async function createWallet() {
+    hideError(setupErrorEl);
+    showLoading(true);
+    try {
+        // Generate a new keypair
+        const newKeypair = Keypair.generate();
+        const seedPhrase = "ERROR_GENERATING_SEED"; // Placeholder - Need BIP39 for mnemonic
+
+        // TODO: Replace Keypair.generate() with mnemonic generation (using bip39 library)
+        // Example (requires importing 'bip39' library):
+        // const mnemonic = bip39.generateMnemonic();
+        // const seed = bip39.mnemonicToSeedSync(mnemonic);
+        // const derivedKeypair = Keypair.fromSeed(seed.slice(0, 32)); // Use first 32 bytes for seed
+        // seedPhrase = mnemonic; // Store the actual mnemonic
+        // keypair = derivedKeypair;
+
+        // TEMPORARY: Using generate() and storing secret key (VERY INSECURE - FOR DEMO ONLY)
+        keypair = newKeypair; // Directly using generated keypair (no seed phrase shown properly yet)
+        const temporarySecret = `[${keypair.secretKey.toString()}]`; // Just showing the byte array
+        saveWalletData(temporarySecret); // Save the INSECURE secret key representation
+
+        alert(`Wallet Created!\n\nAddress: ${keypair.publicKey.toBase58()}\n\n--- !!! WARNING !!! ---\nTHIS IS A PROTOTYPE.\nProper seed phrase generation/display requires the 'bip39' library.\nThe secret key itself is stored INSECURELY in localStorage.\nDO NOT use this for real funds.`);
+
+        await initializeMainApp();
+
+    } catch (error) {
+        console.error("Wallet creation failed:", error);
+        displayError(setupErrorEl, `Wallet creation failed: ${error.message}`);
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function importWallet() {
+    hideError(setupErrorEl);
+    const seedPhrase = importSeedPhraseInput.value.trim();
+    if (!seedPhrase) {
+        displayError(setupErrorEl, "Please enter a seed phrase.");
+        return;
+    }
+
+    showLoading(true);
+    try {
+        // TODO: Implement proper seed phrase import using 'bip39' and potentially 'tweetnacl'
+        // Example (requires 'bip39', 'tweetnacl'):
+        // if (!bip39.validateMnemonic(seedPhrase)) {
+        //     throw new Error("Invalid seed phrase.");
+        // }
+        // const seed = bip39.mnemonicToSeedSync(seedPhrase);
+        // keypair = Keypair.fromSeed(seed.slice(0, 32)); // Use first 32 bytes
+
+        // TEMPORARY: Assuming input is the secret key byte array string (from previous insecure save)
+        if (seedPhrase.startsWith('[') && seedPhrase.endsWith(']')) {
+             const secretKeyBytes = Uint8Array.from(seedPhrase.slice(1, -1).split(',').map(Number));
+             keypair = Keypair.fromSecretKey(secretKeyBytes);
+        } else {
+             throw new Error("Import failed. Prototype currently expects secret key array format `[1,2,...]` or needs BIP39 integration.");
+        }
+
+
+        saveWalletData(seedPhrase); // Save the imported (potentially insecure) data
+        await initializeMainApp();
+
+    } catch (error) {
+        console.error("Wallet import failed:", error);
+        displayError(setupErrorEl, `Wallet import failed: ${error.message}`);
+         localStorage.removeItem('walletSeedPhrase'); // Clear invalid saved data
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function initializeMainApp() {
+    if (!keypair) {
+        console.error("Cannot initialize main app without a keypair.");
+        showWalletSetup();
+        return;
+    }
+    publicKey = keypair.publicKey;
+    userWalletAddress = publicKey.toBase58();
+
+    walletSetupEl.classList.add('hidden');
+    mainAppEl.classList.remove('hidden');
+    showLoading(true); // Show loading for initial data fetch
+
+    // Display basic info immediately
+    walletAddressEl.textContent = userWalletAddress;
+    generateQrCode(userWalletAddress);
+
+    // Display Telegram User Info if available
+    if (tg?.initDataUnsafe?.user) {
+        userInfoEl.textContent = `Welcome, ${tg.initDataUnsafe.user.first_name || 'User'}!`;
+    }
+
+     // Load game state
+    loadGameState();
+
+
+    // Fetch Solana data
+    await refreshWalletData();
+
+    // Set default view
+    showSection('wallet-section');
+
+    showLoading(false);
+}
+
+function showWalletSetup() {
+    mainAppEl.classList.add('hidden');
+    walletSetupEl.classList.remove('hidden');
+    keypair = null;
+    publicKey = null;
+    userWalletAddress = '';
+    localStorage.removeItem('walletSeedPhrase'); // Clear storage on setup screen
+}
+
+async function fetchSolBalance() {
+    if (!publicKey) return 0;
+    try {
+        const balance = await connection.getBalance(publicKey);
+        return balance / LAMPORTS_PER_SOL;
+    } catch (error) {
+        console.error("Failed to fetch SOL balance:", error);
+        displayStatus("Failed to fetch SOL balance", 'error');
+        return 0;
+    }
+}
+
+async function fetchTokensAndNFTs() {
+    if (!publicKey) return { tokens: [], nfts: [] };
+
+    let fetchedTokens = [];
+    let fetchedNfts = [];
+
+    try {
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(publicKey, {
+            programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') // SPL Token Program ID
+        });
+
+        // Process accounts
+        for (const { account } of tokenAccounts.value) {
+            const parsedInfo = account.data.parsed.info;
+            const mintAddress = parsedInfo.mint;
+            const balance = parsedInfo.tokenAmount.uiAmount;
+            const decimals = parsedInfo.tokenAmount.decimals;
+
+            // Basic NFT check (amount=1, decimals=0). Needs refinement for real NFTs (Metaplex standard)
+            if (balance === 1 && decimals === 0) {
+                 // Placeholder NFT data - fetching metadata (name, image) is complex
+                 // Requires calling getMetadataAccount, parsing Metaplex data, fetching URI JSON
+                fetchedNfts.push({
+                    mint: mintAddress,
+                    name: `NFT (${mintAddress.substring(0, 6)}...)`, // Placeholder name
+                    image: null // Placeholder image - requires metadata fetch
+                });
+            }
+            // Regular SPL Token
+            else if (balance > 0) {
+                 // Placeholder Token data - fetching metadata (symbol, name) requires extra calls or a token registry
+                 fetchedTokens.push({
+                     mint: mintAddress,
+                     balance: balance,
+                     decimals: decimals,
+                     symbol: `TKN (${mintAddress.substring(0, 4)})`, // Placeholder symbol
+                     name: `Token ${mintAddress.substring(0, 6)}...` // Placeholder name
+                 });
+            }
+        }
+         // Sort tokens alphabetically (optional)
+        fetchedTokens.sort((a, b) => (a.symbol || '').localeCompare(b.symbol || ''));
+
+
+    } catch (error) {
+        console.error("Failed to fetch tokens/NFTs:", error);
+        displayStatus("Failed to fetch tokens/NFTs", 'error');
+    }
+    return { tokens: fetchedTokens, nfts: fetchedNfts };
+}
+
+
+async function refreshWalletData() {
+    if (!publicKey) return;
+    showLoading(true);
+    console.log("Refreshing wallet data...");
+
+    try {
+        // Fetch balance and tokens/NFTs in parallel
+        const [balanceResult, assetsResult] = await Promise.all([
+            fetchSolBalance(),
+            fetchTokensAndNFTs()
+        ]);
+
+        solBalance = balanceResult;
+        tokens = assetsResult.tokens;
+        nfts = assetsResult.nfts;
+
+        // Update UI
+        updateWalletUI();
+
+    } catch (error) {
+        console.error("Error refreshing wallet data:", error);
+        displayStatus("Error refreshing wallet data", 'error');
+    } finally {
+        showLoading(false);
+        console.log("Refresh complete.");
+    }
+}
+
+
+function updateWalletUI() {
+    if (!publicKey) return;
+
+    // Update Balance
+    solBalanceEl.textContent = solBalance.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 8 });
+
+    // Update Token List
+    tokenListEl.innerHTML = ''; // Clear list
+    if (tokens.length > 0) {
+        tokens.forEach(token => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <span>${token.name || token.symbol}</span>
+                <span>${token.balance.toLocaleString()}</span>
+            `;
+            tokenListEl.appendChild(li);
+        });
+    } else {
+        tokenListEl.innerHTML = '<li>No tokens found.</li>';
+    }
+
+     // Update Send Asset Dropdown
+    sendAssetSelect.innerHTML = '<option value="SOL">SOL</option>'; // Start with SOL
+    tokens.forEach(token => {
+        const option = document.createElement('option');
+        option.value = token.mint; // Use mint address as value
+        option.textContent = `${token.symbol || token.mint.substring(0,6)} (${token.balance})`;
+        option.dataset.decimals = token.decimals; // Store decimals for later use
+        sendAssetSelect.appendChild(option);
+    });
+
+
+    // Update NFT List (Basic)
+    nftListEl.innerHTML = ''; // Clear list
+    if (nfts.length > 0) {
+        nfts.forEach(nft => {
+            const div = document.createElement('div');
+            div.className = 'nft-item';
+            div.innerHTML = `
+                <img src="${nft.image || './placeholder-nft.png'}" alt="${nft.name || 'NFT'}" />
+                <div class="nft-info">${nft.name || 'Unknown NFT'}</div>
+                <span>${nft.mint.substring(0, 6)}...</span>
+            `;
+            nftListEl.appendChild(div);
+        });
+    } else {
+        nftListEl.innerHTML = '<p>No NFTs found.</p>';
+    }
+}
+
+
+async function handleSend(event) {
+    event.preventDefault();
+    if (!keypair) {
+        displayStatus("Wallet not initialized", "error");
+        return;
+    }
+
+    const recipientAddr = recipientAddressInput.value.trim();
+    const amountStr = sendAmountInput.value.trim();
+    const selectedAsset = sendAssetSelect.value; // 'SOL' or token mint address
+
+    if (!recipientAddr || !amountStr) {
+        displayStatus("Please fill in recipient and amount.", "error");
+        return;
+    }
+
+    let recipientPublicKey;
+    try {
+        recipientPublicKey = new PublicKey(recipientAddr);
+    } catch (e) {
+        displayStatus("Invalid recipient address.", "error");
+        return;
+    }
+
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+        displayStatus("Invalid amount.", "error");
+        return;
+    }
+
+    sendBtn.disabled = true;
+    showLoading(true);
+    displayStatus("Preparing transaction...", "info");
+
+    try {
+        const transaction = new Transaction();
+        let signature = '';
+
+        if (selectedAsset === 'SOL') {
+            // SOL Transfer
+             if (amount > solBalance) {
+                throw new Error("Insufficient SOL balance.");
+            }
+            transaction.add(
+                SystemProgram.transfer({
+                    fromPubkey: publicKey,
+                    toPubkey: recipientPublicKey,
+                    lamports: Math.floor(amount * LAMPORTS_PER_SOL), // Convert SOL to lamports
+                })
+            );
+        } else {
+            // SPL Token Transfer - REQUIRES @solana/spl-token library
+            // This part is more complex and needs the spl-token library installed/imported.
+            // You need the sender's token account, receiver's token account (or create it),
+            // and use Token.createTransferInstruction.
+            displayStatus("SPL Token sending not fully implemented in this prototype. Requires @solana/spl-token library.", "error");
+             // Placeholder logic - needs actual implementation
+            // const mintPublicKey = new PublicKey(selectedAsset);
+            // const selectedToken = tokens.find(t => t.mint === selectedAsset);
+            // const decimals = selectedToken?.decimals ?? 0; // Get decimals from stored token data
+            // const amountInSmallestUnit = Math.floor(amount * Math.pow(10, decimals));
+            // console.log(`Need to send ${amountInSmallestUnit} of token ${mintPublicKey.toBase58()}`);
+            // // ... add spl-token transfer instruction here ...
+            throw new Error("SPL Token sending needs implementation.");
+        }
+
+        // Sign and send the transaction
+        console.log("Sending transaction...");
+        signature = await sendAndConfirmTransaction(connection, transaction, [keypair], {
+            commitment: 'confirmed',
+            skipPreflight: false // Keep preflight for checks
+        });
+
+        console.log("Transaction successful with signature:", signature);
+        displayStatus(`Transaction successful! Signature: ${signature.substring(0, 20)}...`, "success");
+
+        // Refresh balance after successful transaction
+        await refreshWalletData();
+        recipientAddressInput.value = ''; // Clear form
+        sendAmountInput.value = '';
+
+    } catch (error) {
+        console.error("Send transaction failed:", error);
+        let errorMessage = `Send failed: ${error.message}`;
+        if (error.logs) {
+            errorMessage += ` Logs: ${JSON.stringify(error.logs)}`;
+        }
+        displayStatus(errorMessage, "error");
+    } finally {
+        sendBtn.disabled = false;
+        showLoading(false);
+    }
+}
+
+// --- --- --- --- ---
+
+// --- Tap Game Functions ---
+
+function saveGameState() {
+    try {
+        const gameState = JSON.stringify({ tapCount, memeBalances });
+        localStorage.setItem('tapGameState', gameState);
+    } catch (e) {
+        console.warn("Could not save game state:", e);
+    }
+}
+
+function loadGameState() {
+     try {
+        const savedState = localStorage.getItem('tapGameState');
+        if (savedState) {
+            const gameState = JSON.parse(savedState);
+            tapCount = gameState.tapCount || 0;
+            memeBalances = gameState.memeBalances || {};
+        } else {
+            // Initialize default state if nothing saved
+             tapCount = 0;
+             memeBalances = {};
+             Object.keys(MEME_COIN_CONFIG).forEach(key => { memeBalances[key] = 0; }); // Initialize balances
+        }
+    } catch (e) {
+        console.warn("Could not load game state, resetting:", e);
+        tapCount = 0;
+        memeBalances = {};
+        Object.keys(MEME_COIN_CONFIG).forEach(key => { memeBalances[key] = 0; });
+    }
+    updateGameUI(); // Update UI after loading
+}
+
+
+function handleTap() {
+    tapCount++;
+
+    // Award meme coins based on config
+    Object.entries(MEME_COIN_CONFIG).forEach(([key, config]) => {
+        if (Math.random() < config.earnChance) {
+            const amountEarned = config.earnAmount();
+            memeBalances[key] = (memeBalances[key] || 0) + amountEarned;
+            console.log(`Earned ${amountEarned} ${config.name}`);
+            // Optional: Show a brief notification of earning
+        }
+    });
+
+    updateGameUI();
+    saveGameState(); // Save state after every tap/reward cycle
+}
+
+function updateGameUI() {
+    tapCountEl.textContent = tapCount.toLocaleString();
+
+    memeCoinBalancesEl.innerHTML = ''; // Clear previous balances
+    let hasBalances = false;
+    Object.entries(MEME_COIN_CONFIG).forEach(([key, config]) => {
+        const balance = memeBalances[key] || 0;
+        if (balance > 0 || !hasBalances) { // Show if balance > 0 or if it's the first one
+             const p = document.createElement('p');
+             p.innerHTML = `${config.icon} ${config.name}: <strong>${balance.toLocaleString()}</strong>`;
+             memeCoinBalancesEl.appendChild(p);
+             hasBalances = true;
+        }
+    });
+
+     if (!hasBalances) {
+        memeCoinBalancesEl.innerHTML = '<p>Keep tapping to earn meme coins!</p>';
+    }
+}
+
+// --- --- --- --- ---
+
+// --- Initialization ---
+document.addEventListener('DOMContentLoaded', () => {
+    console.log("DOM Loaded");
+    tg = window.Telegram.WebApp;
+    tg.ready(); // Inform Telegram the app is ready
+    // tg.expand(); // Optional: Request the app to expand to full height
+
+    // Check if a wallet seed exists in storage (INSECURE METHOD)
+    const savedSeed = loadWalletDataFromStorage();
+    if (savedSeed) {
+        console.log("Found saved wallet data in storage (INSECURE)");
+        // Need to re-initialize keypair from saved data
+        // This depends heavily on how `saveWalletData` stores it (seed vs secret key)
+         importSeedPhraseInput.value = savedSeed; // Pre-fill for potential re-import
+         importWallet(); // Try to automatically import/initialize
+    } else {
+        console.log("No saved wallet found. Showing setup.");
+        showWalletSetup();
+    }
+
+    // --- Event Listeners ---
+    createWalletBtn.addEventListener('click', createWallet);
+    importWalletBtn.addEventListener('click', importWallet);
+    refreshBtn.addEventListener('click', refreshWalletData);
+    copyAddressBtn.addEventListener('click', () => copyToClipboard(userWalletAddress));
+    sendForm.addEventListener('submit', handleSend);
+    tapButton.addEventListener('click', handleTap);
+
+    // Navigation Listener
+    appNav.addEventListener('click', (e) => {
+        if (e.target.classList.contains('nav-btn')) {
+            const sectionId = e.target.getAttribute('data-section');
+            showSection(sectionId);
+        }
+    });
+
+    // Initial UI update for the game section (even if hidden)
+    updateGameUI();
+
+});
+// --- --- --- --- ---
